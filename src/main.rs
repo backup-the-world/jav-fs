@@ -2,136 +2,143 @@ use clap::Parser;
 use dashmap::DashMap;
 use ignore::WalkBuilder;
 use indicatif::{ProgressBar, ProgressStyle};
-use regex::Regex;
-use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use url::Url;
+
+use jav_fs::{convert_smb_url_to_unc, extract_id_from_filename, is_video_file};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Path to scan (e.g. //192.168.3.11/jav/media/ or smb://user:pass@host/share)
     #[arg(default_value = ".")]
     url: String,
 
-    /// Number of threads to use (default: automatic)
     #[arg(short, long)]
     threads: Option<usize>,
 }
 
 fn main() {
     let args = Args::parse();
-    let mut scan_path = args.url.clone();
+    let scan_path = resolve_scan_path(&args.url);
 
-    // SMB URL Handling
-    if scan_path.starts_with("smb://") {
-        match Url::parse(&args.url) {
-            Ok(url) => {
-                if let Some(host) = url.host_str() {
-                    // 1. Construct UNC Path
-                    let mut path_parts = Vec::new();
-                    if let Some(segments) = url.path_segments() {
-                        for segment in segments {
-                            // Filter empty segments (e.g. trailing slash)
-                            if !segment.is_empty() {
-                                path_parts.push(segment);
-                            }
-                        }
-                    }
+    if let Err(e) = authenticate_smb_if_needed(&args.url) {
+        eprintln!("{}", e);
+        return;
+    }
 
-                    let unc_suffix = path_parts.join("\\");
-                    let unc_path = if unc_suffix.is_empty() {
-                        format!("\\\\{}", host)
-                    } else {
-                        format!("\\\\{}\\{}", host, unc_suffix)
-                    };
+    run_scan(&scan_path, args.threads);
+}
 
-                    println!("Converted SMB URL to UNC Path: {}", unc_path);
-
-                    // 2. Handle Authentication
-                    let username = url.username();
-                    let password = url.password().unwrap_or("");
-
-                    if !username.is_empty() {
-                        // Authenticate against IPC$ share to establish session
-                        let auth_target = format!("\\\\{}\\IPC$", host);
-                        println!("Attempting SMB authentication for {} as {}...", host, username);
-
-                        let mut cmd = Command::new("net");
-                        cmd.args(["use", &auth_target, password, &format!("/USER:{}", username)]);
-
-                        // Suppress output unless error, to avoid leaking info or cluttering
-                        match cmd.output() {
-                            Ok(output) => {
-                                if !output.status.success() {
-                                    let stderr = String::from_utf8_lossy(&output.stderr);
-                                    // Error 1219: Multiple connections to a server... by the same user
-                                    if stderr.contains("1219") {
-                                        println!("Existing session found (Error 1219), proceeding with current session.");
-                                    } else {
-                                        eprintln!("Warning: SMB Authentication failed: {}", stderr.trim());
-                                    }
-                                } else {
-                                    println!("SMB Authentication successful.");
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to execute 'net use' command: {}", e);
-                            }
-                        }
-                    }
-
-                    scan_path = unc_path;
-                }
+fn resolve_scan_path(url: &str) -> String {
+    if url.starts_with("smb://") {
+        match convert_smb_url_to_unc(url) {
+            Ok(unc_path) => {
+                println!("Converted SMB URL to UNC Path: {}", unc_path);
+                unc_path
             }
             Err(e) => {
                 eprintln!("Error parsing URL: {}", e);
-                return;
+                String::new()
+            }
+        }
+    } else {
+        url.to_string()
+    }
+}
+
+fn authenticate_smb_if_needed(url: &str) -> Result<(), String> {
+    if !url.starts_with("smb://") {
+        return Ok(());
+    }
+
+    use std::process::Command;
+    use url::Url;
+
+    let parsed_url = Url::parse(url).map_err(|e| format!("Failed to parse URL: {}", e))?;
+    let host = parsed_url.host_str().ok_or("Missing host in URL")?;
+
+    let username = parsed_url.username();
+    let password = parsed_url.password().unwrap_or("");
+
+    if !username.is_empty() {
+        let auth_target = format!("\\\\{}\\IPC$", host);
+        println!(
+            "Attempting SMB authentication for {} as {}...",
+            host, username
+        );
+
+        let mut cmd = Command::new("net");
+        cmd.args([
+            "use",
+            &auth_target,
+            password,
+            &format!("/USER:{}", username),
+        ]);
+
+        match cmd.output() {
+            Ok(output) => {
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    if stderr.contains("1219") {
+                        println!(
+                            "Existing session found (Error 1219), proceeding with current session."
+                        );
+                    } else {
+                        return Err(format!(
+                            "Warning: SMB Authentication failed: {}",
+                            stderr.trim()
+                        ));
+                    }
+                } else {
+                    println!("SMB Authentication successful.");
+                }
+            }
+            Err(e) => {
+                return Err(format!("Failed to execute 'net use' command: {}", e));
             }
         }
     }
 
-    let re_video = Regex::new(r".*\.(?i)(mp4|mkv|wmv)").unwrap();
-    let re_file = Regex::new(r"[[:alpha:]]+-\d+|[[:alpha:]]+\d+").unwrap();
+    Ok(())
+}
+
+fn run_scan(scan_path: &str, threads: Option<usize>) {
+    if scan_path.is_empty() {
+        eprintln!("Invalid scan path");
+        return;
+    }
 
     let cnt = Arc::new(AtomicUsize::new(0));
     let video_cnt = Arc::new(AtomicUsize::new(0));
 
-    // Map: extracted_id -> full_path
     let files = Arc::new(DashMap::new());
-    // Map: filename -> full_path (for failed extractions)
     let files_failed = Arc::new(DashMap::new());
-    // List of conflicting paths
     let conflicts = Arc::new(Mutex::new(Vec::new()));
 
     println!("Scanning path: {} (Parallel)", scan_path);
 
-    // Initialize Progress Bar
     let pb = ProgressBar::new_spinner();
     pb.set_style(
-        ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] Scanned: {pos} | Videos: {msg}")
-            .unwrap()
-            .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
+        ProgressStyle::with_template(
+            "{spinner:.green} [{elapsed_precise}] Scanned: {pos} | Videos: {msg}",
+        )
+        .unwrap()
+        .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
     );
     pb.set_message("0");
     pb.enable_steady_tick(Duration::from_millis(100));
 
-    let mut builder = WalkBuilder::new(&scan_path);
-    // Configure builder to traverse hidden files to match standard `WalkDir` behavior mostly
-    // but still respect .ignore/.gitignore files if present.
+    let mut builder = WalkBuilder::new(scan_path);
     builder.hidden(false);
 
-    if let Some(t) = args.threads {
+    if let Some(t) = threads {
         builder.threads(t);
     }
 
     let walker = builder.build_parallel();
 
     walker.run(|| {
-        let re_video = re_video.clone();
-        let re_file = re_file.clone();
         let cnt = cnt.clone();
         let video_cnt = video_cnt.clone();
         let files = files.clone();
@@ -145,7 +152,6 @@ fn main() {
             let entry = match result {
                 Ok(entry) => entry,
                 Err(err) => {
-                    // Suspend PB to print error cleanly
                     pb.suspend(|| eprintln!("ERROR processing entry: {}", err));
                     return WalkState::Continue;
                 }
@@ -164,7 +170,7 @@ fn main() {
                 None => return WalkState::Continue,
             };
 
-            if !re_video.is_match(&filename) {
+            if !is_video_file(&filename) {
                 return WalkState::Continue;
             }
 
@@ -173,11 +179,8 @@ fn main() {
 
             let fullpath = path.to_string_lossy().to_string();
 
-            if let Some(mat) = re_file.find(&filename) {
-                let match_result = mat.as_str().to_owned();
-
-                // Atomic check-and-insert
-                match files.entry(match_result) {
+            if let Some(id) = extract_id_from_filename(&filename) {
+                match files.entry(id) {
                     dashmap::mapref::entry::Entry::Vacant(e) => {
                         e.insert(fullpath);
                     }
