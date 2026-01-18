@@ -2,6 +2,10 @@
 
 This repository contains `jav-fs`, a Rust-based tool for scanning and managing video files, specifically focused on extracting IDs and handling SMB/UNC paths. It is designed to be fast, multi-threaded, and robust against various filename formats.
 
+## Git
+
+- DO NOT commit changes without asking for permission.
+
 ## Build, Lint, and Test Commands
 
 All operations use standard Cargo commands. It is recommended to run these from the project root.
