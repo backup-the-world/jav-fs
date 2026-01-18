@@ -37,6 +37,16 @@ pub fn is_video_file(filename: &str) -> bool {
     lower.ends_with(".mp4") || lower.ends_with(".mkv") || lower.ends_with(".wmv")
 }
 
+pub fn is_image_file(filename: &str) -> bool {
+    let lower = filename.to_lowercase();
+    lower.ends_with(".jpg")
+        || lower.ends_with(".jpeg")
+        || lower.ends_with(".png")
+        || lower.ends_with(".gif")
+        || lower.ends_with(".bmp")
+        || lower.ends_with(".webp")
+}
+
 pub fn extract_id_from_filename(filename: &str) -> Option<String> {
     static RE_VIDEO: OnceLock<Regex> = OnceLock::new();
     static RE_ID: OnceLock<Regex> = OnceLock::new();
@@ -155,6 +165,23 @@ mod tests {
     #[test]
     fn test_is_video_file_txt() {
         assert!(!is_video_file("test.txt"));
+    }
+
+    #[test]
+    fn test_is_image_file_jpg() {
+        assert!(is_image_file("test.jpg"));
+        assert!(is_image_file("test.JPEG"));
+    }
+
+    #[test]
+    fn test_is_image_file_png() {
+        assert!(is_image_file("test.png"));
+    }
+
+    #[test]
+    fn test_is_image_file_not_image() {
+        assert!(!is_image_file("test.mp4"));
+        assert!(!is_image_file("test.txt"));
     }
 
     #[test]

@@ -301,7 +301,7 @@ fn run_prefix_scan(scan_path: &str, threads: Option<usize>) {
 
 fn resolve_scan_path(url: &str) -> String {
     if url.starts_with("smb://") {
-        match jav_fs::convert_smb_url_to_unc(url) {
+        match convert_smb_url_to_unc(url) {
             Ok(unc_path) => {
                 println!("Converted SMB URL to UNC Path: {}", unc_path);
                 unc_path
