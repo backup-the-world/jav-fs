@@ -262,6 +262,26 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_id_with_suffixes() {
+        assert_eq!(
+            extract_id_from_filename("XYZ-123-C.mp4"),
+            Some("XYZ-123".to_string())
+        );
+        assert_eq!(
+            extract_id_from_filename("XYZ-123-中文字符串-C.mkv"),
+            Some("XYZ-123".to_string())
+        );
+        assert_eq!(
+            extract_id_from_filename("XYZ-123-中文字符串.mp4"),
+            Some("XYZ-123".to_string())
+        );
+        assert_eq!(
+            extract_id_from_filename("XYZ-123-CD1.mp4"),
+            Some("XYZ-123".to_string())
+        );
+    }
+
+    #[test]
     fn test_extract_id_empty_string() {
         assert_eq!(extract_id_from_filename(""), None);
     }
