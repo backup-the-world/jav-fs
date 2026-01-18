@@ -54,6 +54,7 @@ fn run_stats_scan(scan_path: &str, threads: Option<usize>) {
     let cnt = Arc::new(AtomicUsize::new(0));
     let video_cnt = Arc::new(AtomicUsize::new(0));
     let image_cnt = Arc::new(AtomicUsize::new(0));
+    let image_size_sum = Arc::new(AtomicUsize::new(0));
 
     println!("Scanning path: {} (Stats Mode)", scan_path);
     let start = Instant::now();
@@ -78,6 +79,7 @@ fn run_stats_scan(scan_path: &str, threads: Option<usize>) {
         let cnt = cnt.clone();
         let video_cnt = video_cnt.clone();
         let image_cnt = image_cnt.clone();
+        let image_size_sum = image_size_sum.clone();
         let pb = pb.clone();
 
         Box::new(move |result| {
@@ -100,6 +102,9 @@ fn run_stats_scan(scan_path: &str, threads: Option<usize>) {
                     video_cnt.fetch_add(1, Ordering::Relaxed);
                 } else if is_image_file(filename) {
                     image_cnt.fetch_add(1, Ordering::Relaxed);
+                    if let Ok(metadata) = entry.metadata() {
+                        image_size_sum.fetch_add(metadata.len() as usize, Ordering::Relaxed);
+                    }
                 }
             }
 
@@ -113,7 +118,30 @@ fn run_stats_scan(scan_path: &str, threads: Option<usize>) {
     println!("\nScan Result (completed in {:.2?}):", duration);
     println!("1. 文件总数量: {}", cnt.load(Ordering::Relaxed));
     println!("2. 视频文件数量: {}", video_cnt.load(Ordering::Relaxed));
-    println!("3. 图片文件数量: {}", image_cnt.load(Ordering::Relaxed));
+    println!(
+        "3. 图片文件数量: {} (总大小: {})",
+        image_cnt.load(Ordering::Relaxed),
+        format_size(image_size_sum.load(Ordering::Relaxed) as u64)
+    );
+}
+
+fn format_size(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+    const TB: u64 = GB * 1024;
+
+    if bytes < KB {
+        format!("{} B", bytes)
+    } else if bytes < MB {
+        format!("{:.2} KB", bytes as f64 / KB as f64)
+    } else if bytes < GB {
+        format!("{:.2} MB", bytes as f64 / MB as f64)
+    } else if bytes < TB {
+        format!("{:.2} GB", bytes as f64 / GB as f64)
+    } else {
+        format!("{:.2} TB", bytes as f64 / TB as f64)
+    }
 }
 
 fn run_duplicate_scan(scan_path: &str, threads: Option<usize>) {
