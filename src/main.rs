@@ -53,6 +53,7 @@ fn run_stats_scan(scan_path: &str, threads: Option<usize>) {
 
     let cnt = Arc::new(AtomicUsize::new(0));
     let video_cnt = Arc::new(AtomicUsize::new(0));
+    let video_size_sum = Arc::new(AtomicUsize::new(0));
     let image_cnt = Arc::new(AtomicUsize::new(0));
     let image_size_sum = Arc::new(AtomicUsize::new(0));
 
@@ -78,6 +79,7 @@ fn run_stats_scan(scan_path: &str, threads: Option<usize>) {
     walker.run(|| {
         let cnt = cnt.clone();
         let video_cnt = video_cnt.clone();
+        let video_size_sum = video_size_sum.clone();
         let image_cnt = image_cnt.clone();
         let image_size_sum = image_size_sum.clone();
         let pb = pb.clone();
@@ -100,6 +102,9 @@ fn run_stats_scan(scan_path: &str, threads: Option<usize>) {
             if let Some(filename) = path.file_name().and_then(|s| s.to_str()) {
                 if is_video_file(filename) {
                     video_cnt.fetch_add(1, Ordering::Relaxed);
+                    if let Ok(metadata) = entry.metadata() {
+                        video_size_sum.fetch_add(metadata.len() as usize, Ordering::Relaxed);
+                    }
                 } else if is_image_file(filename) {
                     image_cnt.fetch_add(1, Ordering::Relaxed);
                     if let Ok(metadata) = entry.metadata() {
@@ -117,7 +122,11 @@ fn run_stats_scan(scan_path: &str, threads: Option<usize>) {
 
     println!("\nScan Result (completed in {:.2?}):", duration);
     println!("1. 文件总数量: {}", cnt.load(Ordering::Relaxed));
-    println!("2. 视频文件数量: {}", video_cnt.load(Ordering::Relaxed));
+    println!(
+        "2. 视频文件数量: {} (总大小: {})",
+        video_cnt.load(Ordering::Relaxed),
+        format_size(video_size_sum.load(Ordering::Relaxed) as u64)
+    );
     println!(
         "3. 图片文件数量: {} (总大小: {})",
         image_cnt.load(Ordering::Relaxed),
@@ -155,6 +164,7 @@ fn run_duplicate_scan(scan_path: &str, threads: Option<usize>) {
     let files = Arc::new(DashMap::new());
     let files_failed = Arc::new(DashMap::new());
     let conflicts = Arc::new(Mutex::new(Vec::new()));
+    let duplicate_size_sum = Arc::new(AtomicUsize::new(0));
 
     println!("Scanning path: {} (Duplicate Mode)", scan_path);
     let start = Instant::now();
@@ -183,6 +193,7 @@ fn run_duplicate_scan(scan_path: &str, threads: Option<usize>) {
         let files = files.clone();
         let files_failed = files_failed.clone();
         let conflicts = conflicts.clone();
+        let duplicate_size_sum = duplicate_size_sum.clone();
         let pb = pb.clone();
 
         Box::new(move |result| {
@@ -212,6 +223,10 @@ fn run_duplicate_scan(scan_path: &str, threads: Option<usize>) {
                                 e.insert(fullpath);
                             }
                             dashmap::mapref::entry::Entry::Occupied(_) => {
+                                if let Ok(metadata) = entry.metadata() {
+                                    duplicate_size_sum
+                                        .fetch_add(metadata.len() as usize, Ordering::Relaxed);
+                                }
                                 let mut c = conflicts.lock().unwrap();
                                 c.push(fullpath);
                             }
@@ -237,6 +252,10 @@ fn run_duplicate_scan(scan_path: &str, threads: Option<usize>) {
     println!("videos files: {}", video_cnt.load(Ordering::Relaxed));
     println!("actual videos: {}", files.len());
     println!("failed videos: {}", files_failed.len());
+    println!(
+        "duplicate videos size: {}",
+        format_size(duplicate_size_sum.load(Ordering::Relaxed) as u64)
+    );
 
     let conflicts_vec = conflicts.lock().unwrap();
     if !conflicts_vec.is_empty() {
