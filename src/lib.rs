@@ -1,4 +1,5 @@
 use regex::Regex;
+use std::sync::OnceLock;
 use url::Url;
 
 pub fn convert_smb_url_to_unc(url: &str) -> Result<String, String> {
@@ -32,13 +33,16 @@ pub fn convert_smb_url_to_unc(url: &str) -> Result<String, String> {
 }
 
 pub fn is_video_file(filename: &str) -> bool {
-    let re_video = Regex::new(r".*\.(?i)(mp4|mkv|wmv)").unwrap();
-    re_video.is_match(filename)
+    let lower = filename.to_lowercase();
+    lower.ends_with(".mp4") || lower.ends_with(".mkv") || lower.ends_with(".wmv")
 }
 
 pub fn extract_id_from_filename(filename: &str) -> Option<String> {
-    let re_video = Regex::new(r".*\.(?i)(mp4|mkv|wmv)$").unwrap();
-    let re_id = Regex::new(r"[[:alpha:]]+-\d+|[[:alpha:]]+\d+").unwrap();
+    static RE_VIDEO: OnceLock<Regex> = OnceLock::new();
+    static RE_ID: OnceLock<Regex> = OnceLock::new();
+
+    let re_video = RE_VIDEO.get_or_init(|| Regex::new(r".*\.(?i)(mp4|mkv|wmv)$").unwrap());
+    let re_id = RE_ID.get_or_init(|| Regex::new(r"[[:alpha:]]+-\d+|[[:alpha:]]+\d+").unwrap());
 
     let name_without_ext = if re_video.is_match(filename) {
         let pos = filename.rfind('.').unwrap();
@@ -48,6 +52,12 @@ pub fn extract_id_from_filename(filename: &str) -> Option<String> {
     };
 
     re_id.find(name_without_ext).map(|m| m.as_str().to_string())
+}
+
+pub fn extract_prefix_from_id(id: &str) -> Option<String> {
+    static RE_PREFIX: OnceLock<Regex> = OnceLock::new();
+    let re_prefix = RE_PREFIX.get_or_init(|| Regex::new(r"^[[:alpha:]]+").unwrap());
+    re_prefix.find(id).map(|m| m.as_str().to_string())
 }
 
 #[cfg(test)]
@@ -284,5 +294,23 @@ mod tests {
     #[test]
     fn test_extract_id_empty_string() {
         assert_eq!(extract_id_from_filename(""), None);
+    }
+
+    #[test]
+    fn test_extract_prefix_basic() {
+        assert_eq!(extract_prefix_from_id("ABC-123"), Some("ABC".to_string()));
+        assert_eq!(extract_prefix_from_id("mida-983"), Some("mida".to_string()));
+        assert_eq!(extract_prefix_from_id("star-123"), Some("star".to_string()));
+    }
+
+    #[test]
+    fn test_extract_prefix_no_dash() {
+        assert_eq!(extract_prefix_from_id("XYZ456"), Some("XYZ".to_string()));
+    }
+
+    #[test]
+    fn test_extract_prefix_invalid() {
+        assert_eq!(extract_prefix_from_id("123-456"), None);
+        assert_eq!(extract_prefix_from_id(""), None);
     }
 }

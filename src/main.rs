@@ -4,9 +4,11 @@ use ignore::WalkBuilder;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use jav_fs::{convert_smb_url_to_unc, extract_id_from_filename, is_video_file};
+use jav_fs::{
+    convert_smb_url_to_unc, extract_id_from_filename, extract_prefix_from_id, is_video_file,
+};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -16,6 +18,9 @@ struct Args {
 
     #[arg(short, long)]
     threads: Option<usize>,
+
+    #[arg(long)]
+    show_prefix: bool,
 }
 
 fn main() {
@@ -27,7 +32,11 @@ fn main() {
         return;
     }
 
-    run_scan(&scan_path, args.threads);
+    if args.show_prefix {
+        run_prefix_scan(&scan_path, args.threads);
+    } else {
+        run_scan(&scan_path, args.threads);
+    }
 }
 
 fn resolve_scan_path(url: &str) -> String {
@@ -117,6 +126,7 @@ fn run_scan(scan_path: &str, threads: Option<usize>) {
     let conflicts = Arc::new(Mutex::new(Vec::new()));
 
     println!("Scanning path: {} (Parallel)", scan_path);
+    let start = Instant::now();
 
     let pb = ProgressBar::new_spinner();
     pb.set_style(
@@ -197,9 +207,10 @@ fn run_scan(scan_path: &str, threads: Option<usize>) {
         })
     });
 
-    pb.finish_with_message(video_cnt.load(Ordering::Relaxed).to_string());
+    pb.finish_and_clear();
+    let duration = start.elapsed();
 
-    println!("\nScan Complete.");
+    println!("\nScan Complete (completed in {:.2?}).", duration);
     println!("scanned files: {}", cnt.load(Ordering::Relaxed));
     println!("videos files: {}", video_cnt.load(Ordering::Relaxed));
     println!("actual videos: {}", files.len());
@@ -211,5 +222,83 @@ fn run_scan(scan_path: &str, threads: Option<usize>) {
         for entry in conflicts_vec.iter() {
             println!("{}", entry);
         }
+    }
+}
+
+fn run_prefix_scan(scan_path: &str, threads: Option<usize>) {
+    if scan_path.is_empty() {
+        eprintln!("Invalid scan path");
+        return;
+    }
+
+    let prefixes_map = Arc::new(DashMap::new());
+
+    println!("Scanning path: {} (Prefix Mode)", scan_path);
+    let start = Instant::now();
+
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(
+        ProgressStyle::with_template(
+            "{spinner:.green} [{elapsed_precise}] Scanned: {pos} | Prefixes: {msg}",
+        )
+        .unwrap()
+        .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
+    );
+    pb.set_message("0");
+    pb.enable_steady_tick(Duration::from_millis(100));
+
+    let mut builder = WalkBuilder::new(scan_path);
+    builder.hidden(false);
+    if let Some(t) = threads {
+        builder.threads(t);
+    }
+
+    let walker = builder.build_parallel();
+
+    walker.run(|| {
+        let prefixes_map = prefixes_map.clone();
+        let pb = pb.clone();
+
+        Box::new(move |result| {
+            use ignore::WalkState;
+
+            let entry = match result {
+                Ok(entry) => entry,
+                Err(_) => return WalkState::Continue,
+            };
+
+            let path = entry.path();
+            if !path.is_file() {
+                return WalkState::Continue;
+            }
+
+            pb.inc(1);
+
+            if let Some(filename) = path.file_name().and_then(|s| s.to_str()) {
+                if is_video_file(filename) {
+                    if let Some(id) = extract_id_from_filename(filename) {
+                        if let Some(prefix) = extract_prefix_from_id(&id) {
+                            if prefixes_map.insert(prefix.to_uppercase(), ()).is_none() {
+                                pb.set_message(prefixes_map.len().to_string());
+                            }
+                        }
+                    }
+                }
+            }
+
+            WalkState::Continue
+        })
+    });
+
+    pb.finish_and_clear();
+    let duration = start.elapsed();
+
+    let mut prefix_list: Vec<String> = prefixes_map.iter().map(|kv| kv.key().clone()).collect();
+    prefix_list.sort();
+    if !prefix_list.is_empty() {
+        println!("\nUnique Prefixes (completed in {:.2?}):", duration);
+        println!("{}", prefix_list.join(", "));
+    } else {
+        println!("\nNo prefixes found (completed in {:.2?}).", duration);
     }
 }
