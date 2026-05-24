@@ -699,7 +699,13 @@ pub struct HttpImageDownloader;
 
 impl ImageDownloader for HttpImageDownloader {
     fn download(&self, url: &str, destination: &Path) -> Result<(), String> {
-        let response = ureq::get(url)
+        let agent = ureq::AgentBuilder::new()
+            .timeout_connect(std::time::Duration::from_secs(15))
+            .timeout_read(std::time::Duration::from_secs(30))
+            .timeout_write(std::time::Duration::from_secs(15))
+            .build();
+        let response = agent
+            .get(url)
             .set("User-Agent", "Mozilla/5.0 (compatible; jav-fs/1.0)")
             .call()
             .map_err(|e| format!("Failed to download {url}: {e}"))?;
@@ -847,9 +853,21 @@ pub fn apply_planned_videos<D: ImageDownloader, M: FileMover>(
     mover: &M,
     fail_fast: bool,
 ) -> ApplyReport {
-    let mut report = ApplyReport::default();
+    apply_planned_videos_with_progress(planned_videos, downloader, mover, fail_fast, |_, _| {})
+}
 
-    for planned in planned_videos {
+pub fn apply_planned_videos_with_progress<D: ImageDownloader, M: FileMover>(
+    planned_videos: &[PlannedVideo],
+    downloader: &D,
+    mover: &M,
+    fail_fast: bool,
+    mut progress: impl FnMut(usize, usize),
+) -> ApplyReport {
+    let mut report = ApplyReport::default();
+    let total = planned_videos.len();
+
+    for (index, planned) in planned_videos.iter().enumerate() {
+        progress(index + 1, total);
         let result = apply_one_planned_video(planned, downloader, mover, &mut report);
         if result.is_err() && fail_fast {
             break;

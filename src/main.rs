@@ -7,10 +7,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use jav_fs::{
-    apply_planned_videos, convert_smb_url_to_unc, extract_id_from_filename, extract_prefix_from_id,
-    is_distinct_video_part, is_image_file, is_video_file, load_organize_options,
-    run_organize_dry_run_with_progress, HttpImageDownloader, OrganizeCliOptions, OrganizeCliPaths,
-    OrganizeProgress, StdFileMover,
+    apply_planned_videos_with_progress, convert_smb_url_to_unc, extract_id_from_filename,
+    extract_prefix_from_id, is_distinct_video_part, is_image_file, is_video_file,
+    load_organize_options, run_organize_dry_run_with_progress, HttpImageDownloader,
+    OrganizeCliOptions, OrganizeCliPaths, OrganizeProgress, StdFileMover,
 };
 
 #[derive(Parser, Debug)]
@@ -167,11 +167,18 @@ fn run_organize(args: OrganizeArgs) {
                         println!("  Unrecognized: {}", path.display());
                     }
                     if options.apply {
-                        let apply_report = apply_planned_videos(
+                        eprintln!(
+                            "[organize] applying {} planned videos...",
+                            report.planned_videos.len()
+                        );
+                        let apply_report = apply_planned_videos_with_progress(
                             &report.planned_videos,
                             &HttpImageDownloader,
                             &StdFileMover,
                             options.fail_fast,
+                            |done, total| {
+                                eprintln!("[organize] applying: {}/{}", done, total);
+                            },
                         );
                         println!("Already organized: {}", apply_report.moved_videos.len());
                         println!("Moved videos: {}", apply_report.moved_videos.len());
