@@ -40,6 +40,12 @@
 
 ## 代码风格指南
 
+### 文档语言
+- 本项目的文档默认使用中文，包括 README、PRD、Issue、ADR、Agent 指南、领域文档和普通 Markdown 说明。
+- 英文仅用于专业术语、代码标识符、命令、配置项、协议名、库名、错误原文、Conventional Commits 类型以及难以准确翻译的领域词汇。
+- 如需保留英文术语，优先采用“中文说明 + 英文术语”的形式，例如“重复扫描（duplicate scan）”、“分片视频（video part）”。
+- 面向用户的新增说明、注释性文档和 issue 描述应避免整段英文，除非引用外部原文或 API/CLI 输出。
+
 ### 语言与 Edition
 - **Rust：** 使用 `Cargo.toml` 中指定的 Edition 2021。避免使用已废弃特性或旧 edition 写法。
 

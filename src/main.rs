@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use jav_fs::{
-    convert_smb_url_to_unc, extract_id_from_filename, extract_prefix_from_id, is_image_file,
-    is_video_file,
+    convert_smb_url_to_unc, extract_id_from_filename, extract_prefix_from_id,
+    is_distinct_video_part, is_image_file, is_video_file,
 };
 
 #[derive(Parser, Debug)]
@@ -218,17 +218,19 @@ fn run_duplicate_scan(scan_path: &str, threads: Option<usize>) {
 
                     let fullpath = path.to_string_lossy().to_string();
                     if let Some(id) = extract_id_from_filename(filename) {
-                        match files.entry(id) {
+                        match files.entry(id.to_uppercase()) {
                             dashmap::mapref::entry::Entry::Vacant(e) => {
                                 e.insert(fullpath);
                             }
-                            dashmap::mapref::entry::Entry::Occupied(_) => {
-                                if let Ok(metadata) = entry.metadata() {
-                                    duplicate_size_sum
-                                        .fetch_add(metadata.len() as usize, Ordering::Relaxed);
+                            dashmap::mapref::entry::Entry::Occupied(e) => {
+                                if !is_distinct_video_part(e.get(), &fullpath) {
+                                    if let Ok(metadata) = entry.metadata() {
+                                        duplicate_size_sum
+                                            .fetch_add(metadata.len() as usize, Ordering::Relaxed);
+                                    }
+                                    let mut c = conflicts.lock().unwrap();
+                                    c.push(fullpath);
                                 }
-                                let mut c = conflicts.lock().unwrap();
-                                c.push(fullpath);
                             }
                         }
                     } else {

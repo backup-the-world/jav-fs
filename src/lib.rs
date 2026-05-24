@@ -49,10 +49,14 @@ pub fn is_image_file(filename: &str) -> bool {
 
 pub fn extract_id_from_filename(filename: &str) -> Option<String> {
     static RE_VIDEO: OnceLock<Regex> = OnceLock::new();
-    static RE_ID: OnceLock<Regex> = OnceLock::new();
+    static RE_ID_WITH_DASH: OnceLock<Regex> = OnceLock::new();
+    static RE_ID_WITHOUT_DASH: OnceLock<Regex> = OnceLock::new();
 
     let re_video = RE_VIDEO.get_or_init(|| Regex::new(r".*\.(?i)(mp4|mkv|wmv)$").unwrap());
-    let re_id = RE_ID.get_or_init(|| Regex::new(r"[[:alpha:]]+-\d+|[[:alpha:]]+\d+").unwrap());
+    let re_id_with_dash = RE_ID_WITH_DASH
+        .get_or_init(|| Regex::new(r"[[:alnum:]]*[[:alpha:]][[:alnum:]]*-\d+").unwrap());
+    let re_id_without_dash =
+        RE_ID_WITHOUT_DASH.get_or_init(|| Regex::new(r"[[:alpha:]]+\d+").unwrap());
 
     let name_without_ext = if re_video.is_match(filename) {
         let pos = filename.rfind('.').unwrap();
@@ -61,13 +65,60 @@ pub fn extract_id_from_filename(filename: &str) -> Option<String> {
         filename
     };
 
-    re_id.find(name_without_ext).map(|m| m.as_str().to_string())
+    let find_id = |name: &str| {
+        re_id_with_dash
+            .find(name)
+            .or_else(|| re_id_without_dash.find(name))
+            .map(|m| m.as_str().to_string())
+    };
+
+    name_without_ext
+        .rsplit_once('@')
+        .and_then(|(_, suffix)| find_id(suffix))
+        .or_else(|| find_id(name_without_ext))
 }
 
 pub fn extract_prefix_from_id(id: &str) -> Option<String> {
     static RE_PREFIX: OnceLock<Regex> = OnceLock::new();
     let re_prefix = RE_PREFIX.get_or_init(|| Regex::new(r"^[[:alpha:]]+").unwrap());
     re_prefix.find(id).map(|m| m.as_str().to_string())
+}
+
+pub fn extract_video_part_from_filename(filename: &str) -> Option<String> {
+    static RE_VIDEO: OnceLock<Regex> = OnceLock::new();
+    static RE_PART: OnceLock<Regex> = OnceLock::new();
+
+    let re_video = RE_VIDEO.get_or_init(|| Regex::new(r".*\.(?i)(mp4|mkv|wmv)$").unwrap());
+    let re_part = RE_PART.get_or_init(|| {
+        Regex::new(
+            r"(?i)(?:[_\. ](?:part|pt|cd)?(\d+)|-(?:part|pt|cd)(\d+))(?:[_\-. ]?(?:4k|8k|fhd|hd))?$",
+        )
+        .unwrap()
+    });
+
+    let name_without_ext = if re_video.is_match(filename) {
+        let pos = filename.rfind('.').unwrap();
+        &filename[..pos]
+    } else {
+        filename
+    };
+
+    re_part.captures(name_without_ext).and_then(|captures| {
+        captures
+            .get(1)
+            .or_else(|| captures.get(2))
+            .map(|m| m.as_str().to_string())
+    })
+}
+
+pub fn is_distinct_video_part(left: &str, right: &str) -> bool {
+    match (
+        extract_video_part_from_filename(left),
+        extract_video_part_from_filename(right),
+    ) {
+        (Some(left_part), Some(right_part)) => left_part != right_part,
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -259,6 +310,34 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_id_ignores_download_site_prefix() {
+        assert_eq!(
+            extract_id_from_filename("hhd800.com@MIDA-307.mp4"),
+            Some("MIDA-307".to_string())
+        );
+        assert_eq!(
+            extract_id_from_filename("hhd800.com@ABC123.mp4"),
+            Some("ABC123".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_id_prefers_dashed_id_over_earlier_site_token() {
+        assert_eq!(
+            extract_id_from_filename("hhd800.com MIDA-307.mp4"),
+            Some("MIDA-307".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_id_after_numeric_site_prefix() {
+        assert_eq!(
+            extract_id_from_filename("4k2.com@13dsvr01794_2_8k.mp4"),
+            Some("dsvr01794".to_string())
+        );
+    }
+
+    #[test]
     fn test_extract_id_multiple_possible() {
         assert_eq!(
             extract_id_from_filename("ABC-123_DEF-456.mp4"),
@@ -295,6 +374,14 @@ mod tests {
         assert_eq!(
             extract_id_from_filename("ABC-123"),
             Some("ABC-123".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_id_with_alphanumeric_prefix() {
+        assert_eq!(
+            extract_id_from_filename("T38-052.mp4"),
+            Some("T38-052".to_string())
         );
     }
 
@@ -339,5 +426,47 @@ mod tests {
     fn test_extract_prefix_invalid() {
         assert_eq!(extract_prefix_from_id("123-456"), None);
         assert_eq!(extract_prefix_from_id(""), None);
+    }
+
+    #[test]
+    fn test_extract_video_part_with_resolution_suffix() {
+        assert_eq!(
+            extract_video_part_from_filename("4k2.com@13dsvr01794_1_8k.mp4"),
+            Some("1".to_string())
+        );
+        assert_eq!(
+            extract_video_part_from_filename("twojav.com@urvrsp00535_2_8k.mp4"),
+            Some("2".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_video_part_cd_suffix() {
+        assert_eq!(
+            extract_video_part_from_filename("XYZ-123-CD1.mp4"),
+            Some("1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_video_part_none_for_plain_id() {
+        assert_eq!(extract_video_part_from_filename("START-476.mp4"), None);
+        assert_eq!(extract_video_part_from_filename("T38-052.mp4"), None);
+    }
+
+    #[test]
+    fn test_is_distinct_video_part() {
+        assert!(is_distinct_video_part(
+            "4k2.com@13dsvr01794_1_8k.mp4",
+            "4k2.com@13dsvr01794_2_8k.mp4"
+        ));
+        assert!(!is_distinct_video_part(
+            "4k2.com@13dsvr01794_1_8k.mp4",
+            "other@13dsvr01794_1_8k.mp4"
+        ));
+        assert!(!is_distinct_video_part(
+            "START-476.mp4",
+            "hhd800.com@START-476.mp4"
+        ));
     }
 }
