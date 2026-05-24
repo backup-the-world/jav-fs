@@ -700,6 +700,7 @@ pub struct HttpImageDownloader;
 impl ImageDownloader for HttpImageDownloader {
     fn download(&self, url: &str, destination: &Path) -> Result<(), String> {
         let response = ureq::get(url)
+            .set("User-Agent", "Mozilla/5.0 (compatible; jav-fs/1.0)")
             .call()
             .map_err(|e| format!("Failed to download {url}: {e}"))?;
         let mut reader = response.into_reader();
@@ -1028,9 +1029,14 @@ fn fetch_video_metadata(
 }
 
 fn parse_preview_images(value: &str) -> Vec<String> {
+    if let Ok(images) = serde_json::from_str::<Vec<String>>(value) {
+        return images;
+    }
+
     value
         .split(['\n', ',', ';'])
         .map(str::trim)
+        .map(|value| value.trim_matches(|ch| ch == '[' || ch == ']' || ch == '"'))
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .collect()
@@ -1836,6 +1842,20 @@ target = "/config-media"
             fs::write(destination, url).unwrap();
             Ok(())
         }
+    }
+
+    #[test]
+    fn test_parse_preview_images_reads_json_array_urls() {
+        let images =
+            parse_preview_images(r#"["https://example.test/1.jpg", "https://example.test/2.jpg"]"#);
+
+        assert_eq!(
+            images,
+            vec![
+                "https://example.test/1.jpg".to_string(),
+                "https://example.test/2.jpg".to_string()
+            ]
+        );
     }
 
     #[test]
