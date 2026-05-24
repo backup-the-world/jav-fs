@@ -403,6 +403,7 @@ pub fn plan_organize_targets(
     candidates: Vec<VideoCandidate>,
     metadata: Vec<VideoMetadata>,
 ) -> OrganizeDryRunReport {
+    let existing_actor_dirs = cache_existing_actor_dirs(target);
     let metadata_by_id: BTreeMap<String, VideoMetadata> = metadata
         .into_iter()
         .map(|video| (video.product_id.to_uppercase(), video))
@@ -440,7 +441,7 @@ pub fn plan_organize_targets(
             continue;
         }
 
-        let actor_dir = actor_dir_for(target, &video.actresses);
+        let actor_dir = actor_dir_for(target, &video.actresses, &existing_actor_dirs);
         let year = video.release_date.chars().take(4).collect::<String>();
         let (title, title_changed) = sanitize_path_component(&video.title);
         let prefix = format!("[{}] {} - ", year, product_id);
@@ -529,10 +530,8 @@ fn has_batch_conflict(group: &[VideoCandidate]) -> bool {
     false
 }
 
-fn actor_dir_for(target: &Path, actresses: &[ActressMetadata]) -> PathBuf {
-    let expected_names = actor_names_by_id(actresses);
-    let expected_set: BTreeSet<String> = expected_names.iter().cloned().collect();
-
+fn cache_existing_actor_dirs(target: &Path) -> BTreeMap<BTreeSet<String>, String> {
+    let mut dirs = BTreeMap::new();
     if let Ok(entries) = fs::read_dir(target) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -545,11 +544,23 @@ fn actor_dir_for(target: &Path, actresses: &[ActressMetadata]) -> PathBuf {
             let Some(stripped) = name.strip_prefix('#') else {
                 continue;
             };
-            let existing_set: BTreeSet<String> = stripped.split(',').map(str::to_string).collect();
-            if existing_set == expected_set {
-                return path;
-            }
+            let set: BTreeSet<String> = stripped.split(',').map(str::to_string).collect();
+            dirs.entry(set).or_insert_with(|| stripped.to_string());
         }
+    }
+    dirs
+}
+
+fn actor_dir_for(
+    target: &Path,
+    actresses: &[ActressMetadata],
+    existing_dirs: &BTreeMap<BTreeSet<String>, String>,
+) -> PathBuf {
+    let expected_names = actor_names_by_id(actresses);
+    let expected_set: BTreeSet<String> = expected_names.iter().cloned().collect();
+
+    if let Some(cached_name) = existing_dirs.get(&expected_set) {
+        return target.join(format!("#{}", cached_name));
     }
 
     target.join(format!("#{}", expected_names.join(",")))
