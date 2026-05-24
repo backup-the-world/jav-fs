@@ -20,6 +20,7 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+jav-fs.toml
 
 # Logs and temporary files
 *.log

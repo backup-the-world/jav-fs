@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use dashmap::DashMap;
 use ignore::WalkBuilder;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -7,13 +7,18 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use jav_fs::{
-    convert_smb_url_to_unc, extract_id_from_filename, extract_prefix_from_id,
-    is_distinct_video_part, is_image_file, is_video_file,
+    apply_planned_videos, convert_smb_url_to_unc, extract_id_from_filename, extract_prefix_from_id,
+    is_distinct_video_part, is_image_file, is_video_file, load_organize_options,
+    run_organize_dry_run_with_progress, HttpImageDownloader, OrganizeCliOptions, OrganizeCliPaths,
+    OrganizeProgress, StdFileMover,
 };
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Command>,
+
     #[arg(default_value = ".")]
     url: String,
 
@@ -27,8 +32,43 @@ struct Args {
     show_duplicate: bool,
 }
 
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// 预览或执行 JAV 媒体库入库整理
+    Organize(OrganizeArgs),
+}
+
+#[derive(Parser, Debug)]
+struct OrganizeArgs {
+    #[arg(long)]
+    source: Option<String>,
+
+    #[arg(long)]
+    target: Option<String>,
+
+    #[arg(long)]
+    database: Option<String>,
+
+    #[arg(long)]
+    apply: bool,
+
+    #[arg(long)]
+    fail_fast: bool,
+
+    #[arg(long)]
+    exclude: Vec<String>,
+}
+
 fn main() {
     let args = Args::parse();
+
+    if let Some(command) = args.command {
+        match command {
+            Command::Organize(organize_args) => run_organize(organize_args),
+        }
+        return;
+    }
+
     let scan_path = resolve_scan_path(&args.url);
 
     if let Err(e) = authenticate_smb_if_needed(&args.url) {
@@ -42,6 +82,128 @@ fn main() {
         run_duplicate_scan(&scan_path, args.threads);
     } else {
         run_stats_scan(&scan_path, args.threads);
+    }
+}
+
+fn run_organize(args: OrganizeArgs) {
+    let cli = OrganizeCliOptions {
+        paths: OrganizeCliPaths {
+            source: args.source,
+            target: args.target,
+            database: args.database,
+        },
+        apply: args.apply,
+        fail_fast: args.fail_fast,
+        exclude: args.exclude,
+    };
+
+    match load_organize_options(cli, "jav-fs.toml") {
+        Ok(options) => {
+            if options.apply {
+                println!("Organize apply (artwork, NFO generation, and video move).");
+            } else {
+                println!("Organize dry-run (no files will be written, downloaded, or moved).");
+            }
+            println!("Source: {}", options.source.display());
+            println!("Target: {}", options.target.display());
+            println!("Database: {}", options.database.display());
+            if !options.exclude.is_empty() {
+                println!("Exclude: {}", options.exclude.join(", "));
+            }
+
+            eprintln!("[organize] scanning source...");
+            match run_organize_dry_run_with_progress(&options, |progress| match progress {
+                OrganizeProgress::Scan(progress) => {
+                    eprintln!(
+                        "[organize] scanned entries: {} | video candidates: {} | unrecognized: {}",
+                        progress.scanned_entries,
+                        progress.video_candidates,
+                        progress.unrecognized_videos
+                    );
+                }
+                OrganizeProgress::MetadataLookup { processed, total } => {
+                    eprintln!("[organize] metadata lookup: {}/{}", processed, total);
+                }
+                OrganizeProgress::Planning => {
+                    eprintln!("[organize] planning target paths...");
+                }
+            }) {
+                Ok(report) => {
+                    eprintln!("[organize] scan/database/plan complete.");
+                    println!("Candidates: {}", report.candidate_count);
+                    println!("Recognized with metadata: {}", report.candidates.len());
+                    if options.apply {
+                        println!("Already organized: {}", 0);
+                    } else {
+                        println!("Will organize: {}", report.planned_videos.len());
+                    }
+                    for planned in &report.planned_videos {
+                        println!(
+                            "  Plan: {} -> {} (NFO: {})",
+                            planned.source_path.display(),
+                            planned.target_video_path.display(),
+                            planned.nfo_path.display()
+                        );
+                    }
+                    println!(
+                        "Already exists skipped: {}",
+                        report.target_name_conflicts.len()
+                    );
+                    println!("Batch conflicts: {}", report.batch_conflicts.len());
+                    println!(
+                        "Target name conflicts: {}",
+                        report.target_name_conflicts.len()
+                    );
+                    println!("Missing metadata: {}", report.missing_metadata.len());
+                    println!("Missing actress info: {}", report.missing_actresses.len());
+                    println!(
+                        "Missing release dates: {}",
+                        report.missing_release_dates.len()
+                    );
+                    println!("Empty titles: {}", report.empty_titles.len());
+                    println!("Path warnings: {}", report.path_warnings.len());
+                    println!("Unrecognized videos: {}", report.unrecognized_videos.len());
+                    for path in report.unrecognized_videos {
+                        println!("  Unrecognized: {}", path.display());
+                    }
+                    if options.apply {
+                        let apply_report = apply_planned_videos(
+                            &report.planned_videos,
+                            &HttpImageDownloader,
+                            &StdFileMover,
+                            options.fail_fast,
+                        );
+                        println!("Already organized: {}", apply_report.moved_videos.len());
+                        println!("Moved videos: {}", apply_report.moved_videos.len());
+                        println!("NFO failures: {}", apply_report.nfo_failures.len());
+                        println!("Move failures: {}", apply_report.move_failures.len());
+                        println!(
+                            "Source delete failures: {}",
+                            apply_report.source_delete_failures.len()
+                        );
+                        println!("Artwork warnings: {}", apply_report.artwork_warnings.len());
+                        for warning in apply_report.artwork_warnings {
+                            println!("  Artwork warning: {}", warning);
+                        }
+                    }
+                    for candidate in report.missing_metadata {
+                        println!(
+                            "  Missing metadata: {} ({})",
+                            candidate.product_id,
+                            candidate.path.display()
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!("{}", e);
+                    std::process::exit(2);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(2);
+        }
     }
 }
 

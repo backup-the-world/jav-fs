@@ -6,7 +6,7 @@
 
 ```text
 src/main.rs  应用编排层：CLI、扫描模式选择、并发遍历、进度展示、结果输出
-src/lib.rs   领域规则层：SMB 路径转换、文件类型识别、番号 ID/番号前缀/分片视频识别
+src/lib.rs   领域规则层：SMB 路径转换、文件类型识别、番号 ID/番号前缀/分片视频识别、入库配置解析、入库源扫描、目标路径规划、NFO 生成、图片准备、移动执行和结构化报告
 ```
 
 `src/main.rs` 不应沉淀复杂的文件名识别规则；这类规则应优先放在 `src/lib.rs`，并用单元测试覆盖。
@@ -22,7 +22,8 @@ main
 └── 选择扫描模式
     ├── 统计扫描
     ├── 重复扫描
-    └── 前缀扫描
+    ├── 前缀扫描
+    └── 入库整理 dry-run
 ```
 
 ## 扫描模型
@@ -52,6 +53,8 @@ main
 
 - `is_video_file`
 - `is_image_file`
+
+视频文件定义集中在 `src/lib.rs`，当前统一支持 `.mp4`、`.mkv`、`.wmv`、`.avi`、`.mov`、`.m4v`、`.ts`，统计扫描、重复扫描、前缀扫描和后续入库整理都应复用这一规则。
 
 ## 重复扫描
 
@@ -96,6 +99,52 @@ main
 - `is_video_file`
 - `extract_id_from_filename`
 - `extract_prefix_from_id`
+
+## 入库整理 dry-run
+
+入库整理通过 `organize` 子命令启动。当前阶段只实现安全 dry-run：解析完整 CLI 或完整本地配置，扫描 source 下的非隐藏路径，跳过默认排除目录和用户追加 exclude，识别统一视频扩展名范围内的候选视频，沿用番号 ID 提取规则，并查询 SQLite 数据库 `videos.product_id` 判断是否缺少元数据。
+
+```text
+organize 配置
+→ 解析 source/target/database/exclude
+→ 递归扫描 source
+→ 跳过隐藏路径、@eaDir、tmp、temp、incomplete 和用户 exclude
+→ 识别视频候选
+    ├── 无法提取番号 ID：未识别视频
+    └── 可提取番号 ID：查询 videos.product_id
+        ├── 存在：有基础元数据的候选
+        └── 不存在：缺少元数据
+→ 输出基础 dry-run 报告
+```
+
+相关领域规则和入口：
+
+- `load_organize_options`
+- `scan_organize_source`
+- `run_organize_dry_run`
+- `plan_organize_targets`
+- `generate_nfo`
+- `prepare_artwork`
+- `apply_planned_videos`
+- `OrganizeDryRunReport::counts`
+- `ApplyReport::counts`
+- `is_video_file`
+- `extract_id_from_filename`
+
+## NFO 生成
+
+NFO 生成由 `generate_nfo` 负责，输入数据库元数据和已存在或已成功生成的图片引用集合，输出 XML 字符串。标题字段使用 `番号ID - 标题`，演员名保留数据库原始写法，genre/tag 双写，`studio` 使用 maker 优先否则 label，`runtime` 使用 `{duration}分鍾` 风格，文本字段做 XML 转义。
+
+当前 `--apply` 会先下载/覆盖 basename 图片，再生成 NFO，且 NFO 只引用成功下载的图片；图片失败只记录警告，不阻止 NFO。NFO 成功后才移动视频。移动优先使用 rename；rename 失败时复制、校验大小一致后删除源文件。复制成功但删除源文件失败时入库仍算成功，并报告源文件删除失败。
+
+## 报告边界
+
+入库整理报告由结构化结果驱动，而不是只依赖终端字符串：
+
+- dry-run 使用 `OrganizeDryRunReport` 和 `OrganizeDryRunReport::counts`。
+- apply 使用 `ApplyReport` 和 `ApplyReport::counts`。
+
+报告分类覆盖：将入库/已入库、已存在跳过、批内冲突、目标同名冲突、缺少元数据、缺少演员信息、缺少发行日期、标题为空、NFO 失败、图片下载警告、路径清洗/截断警告、未识别视频和源文件删除失败。后续 JSON 报告应优先复用这些结构化结果，而不是解析人类可读输出。
 
 ## SMB 路径处理
 

@@ -1,0 +1,7 @@
+[organize]
+source = "/Volumes/jav/incoming/incoming-hd"
+target = "/Volumes/jav/media/hd"
+database = "~/dev/jav/jav-hub/data/jav-data.db"
+exclude = [
+  "**/sample/**",
+]
