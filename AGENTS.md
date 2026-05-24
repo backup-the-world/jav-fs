@@ -1,104 +1,125 @@
-# Agent Guide - jav-fs
+# Agent 指南 - jav-fs
 
-This repository contains `jav-fs`, a Rust-based tool for scanning and managing video files, specifically focused on extracting IDs and handling SMB/UNC paths. It is designed to be fast, multi-threaded, and robust against various filename formats.
+本仓库包含 `jav-fs`：一个基于 Rust 的视频文件扫描与管理工具，重点用于提取番号 ID，并处理 SMB/UNC 路径。它的设计目标是快速、多线程，并能稳健处理多种文件名格式。
 
 ## Git
 
-- DO NOT commit changes without asking for permission.
+- 未经明确许可，不要提交更改。
+- 提交信息使用 Conventional Commits，格式为 `type: subject`，例如 `feat: add scanner option`。
+- 常用提交类型：`feat`、`fix`、`docs`、`style`、`refactor`、`perf`、`test`、`build`、`ci`、`chore`、`revert`。
 
-## Build, Lint, and Test Commands
+## 构建、Lint 与测试命令
 
-All operations use standard Cargo commands. It is recommended to run these from the project root.
+所有操作都使用标准 Cargo 命令。建议在项目根目录执行。
 
-### Build
-- **Build project:** `cargo build`
-- **Build release version:** `cargo build --release` (recommended for actual usage due to performance optimizations)
+### 构建
+- **构建项目：** `cargo build`
+- **构建 release 版本：** `cargo build --release`（实际使用时推荐，性能更好）
 
-### Lint and Format
-- **Check formatting:** `cargo fmt -- --check`
-- **Apply formatting:** `cargo fmt`
-- **Lint with clippy:** `cargo clippy`
-- **Fix clippy suggestions:** `cargo clippy --fix`
+### 本地工程规范入口
+- **安装本地 hooks：** `just setup`（需要 `cog`/Cocogitto）
+- **完整本地门禁：** `just check`（格式检查 + clippy + 测试）
+- **提交前检查：** `just pre-commit`（与 pre-commit hook 一致）
 
-### Testing
-- **Run all tests:** `cargo test`
-- **Run a specific test:** `cargo test <test_function_name>`
-  - Example: `cargo test test_convert_smb_url_to_unc_basic`
-- **Run tests in a module:** `cargo test tests::<module_name>`
-- **Run tests with output:** `cargo test -- --nocapture` (useful for debugging with `println!`)
+### Lint 与格式化
+- **检查格式：** `just fmt-check`（等价于 `cargo fmt -- --check`）
+- **应用格式化：** `just fmt`（等价于 `cargo fmt`）
+- **运行 clippy：** `just lint`（等价于 `cargo clippy --all-targets -- -D warnings`）
+- **修复 clippy 建议：** `cargo clippy --fix`
 
-### Running the Application
-- **Execute from source:** `cargo run -- <URL> [ARGS]`
-- **Example:** `cargo run -- smb://nas/video --threads 4`
+### 测试
+- **运行全部测试：** `just test`（等价于 `cargo test --all-targets`）
+- **运行指定测试：** `cargo test <test_function_name>`
+  - 示例：`cargo test test_convert_smb_url_to_unc_basic`
+- **运行某个模块的测试：** `cargo test tests::<module_name>`
+- **运行测试并显示输出：** `cargo test -- --nocapture`（调试 `println!` 时有用）
 
-## Code Style Guidelines
+### 运行应用
+- **从源码执行：** `cargo run -- <URL> [ARGS]`
+- **示例：** `cargo run -- smb://nas/video --threads 4`
 
-### Language & Edition
-- **Rust:** Edition 2021 as specified in `Cargo.toml`. Avoid using deprecated features or editions.
+## 代码风格指南
+
+### 语言与 Edition
+- **Rust：** 使用 `Cargo.toml` 中指定的 Edition 2021。避免使用已废弃特性或旧 edition 写法。
 
 ### Imports
-- Group imports in the following order, with a blank line between groups:
-  1. Standard library (`std::...`)
-  2. External dependencies (`clap`, `dashmap`, `url`, etc.)
-  3. Local module imports (`use crate::...` or `use jav_fs::...`)
-- Prefer explicit imports (e.g., `use std::sync::Arc`) over wildcard imports (`use std::sync::*`), except in test modules where `use super::*;` is the standard pattern.
+- 按以下顺序分组导入，并在组之间留空行：
+  1. 标准库（`std::...`）
+  2. 外部依赖（`clap`、`dashmap`、`url` 等）
+  3. 本地模块导入（`use crate::...` 或 `use jav_fs::...`）
+- 优先使用显式导入（例如 `use std::sync::Arc`），避免通配符导入（`use std::sync::*`）。测试模块中标准的 `use super::*;` 例外。
 
-### Formatting
-- Strictly follow `rustfmt` defaults.
-- Maximum line length is generally 100-120 characters, but rely on `cargo fmt` to handle this automatically.
-- Use 4 spaces for indentation.
+### 格式化
+- 严格遵循 `rustfmt` 默认格式。
+- 最大行宽通常保持在 100-120 字符左右，但以 `cargo fmt` 自动处理为准。
+- 使用 4 个空格缩进。
 
-### Naming Conventions
-- **Variables/Functions/Modules:** `snake_case` (e.g., `extract_id_from_filename`, `scan_path`).
-- **Structs/Enums/Traits:** `PascalCase` (e.g., `Args`, `WalkState`).
-- **Constants:** `SCREAMING_SNAKE_CASE`.
-- **Booleans:** Prefix with `is_`, `has_`, or `can_` where appropriate (e.g., `is_video_file`, `has_auth`).
+### 命名约定
+- **变量/函数/模块：** `snake_case`（例如 `extract_id_from_filename`、`scan_path`）。
+- **结构体/枚举/Trait：** `PascalCase`（例如 `Args`、`WalkState`）。
+- **常量：** `SCREAMING_SNAKE_CASE`。
+- **布尔值：** 适当使用 `is_`、`has_`、`can_` 前缀（例如 `is_video_file`、`has_auth`）。
 
-### Types and Ownership
-- Use `String` for owned text data and `&str` for read-only string slices.
-- Leverage Rust's type inference for local variables, but provide explicit types for complex generic structures (like `Arc<DashMap<String, String>>`) or public API signatures.
-- **Thread Safety:** The project uses `Arc<T>` for shared ownership, `AtomicUsize` for shared counters, and thread-safe collections like `DashMap` for concurrent storage. Avoid `Mutex<T>` unless absolutely necessary for complex state synchronization.
+### 类型与所有权
+- 拥有文本数据时使用 `String`，只读字符串切片使用 `&str`。
+- 局部变量可利用 Rust 类型推断；复杂泛型结构（如 `Arc<DashMap<String, String>>`）或公开 API 签名应提供显式类型。
+- **线程安全：** 本项目使用 `Arc<T>` 做共享所有权，`AtomicUsize` 做共享计数器，并使用 `DashMap` 等线程安全集合做并发存储。除非确有必要处理复杂状态同步，否则避免使用 `Mutex<T>`。
 
-### Error Handling
-- Use `Result<T, E>` for recoverable errors and `Option<T>` for optional values.
-- Prefer `map_err` to convert error types or add context to error strings.
-  - Example: `Url::parse(url).map_err(|e| format!("Failed to parse URL: {}", e))?`
-- Error messages should be descriptive, concise, and start with an uppercase letter.
-- Use `unwrap()` or `expect()` sparingly. They are acceptable in:
-  - Unit tests.
-  - Initializing `Regex` objects that are known to be valid.
-  - Situations where failure is genuinely impossible (e.g., getting a filename from a path that was just verified to be a file).
+### 错误处理
+- 可恢复错误使用 `Result<T, E>`，可选值使用 `Option<T>`。
+- 优先使用 `map_err` 转换错误类型或补充上下文字符串。
+  - 示例：`Url::parse(url).map_err(|e| format!("Failed to parse URL: {}", e))?`
+- 错误信息应简洁、描述清楚，并以大写字母开头。
+- 谨慎使用 `unwrap()` 或 `expect()`。它们可用于：
+  - 单元测试。
+  - 初始化已知合法的 `Regex`。
+  - 确实不可能失败的场景（例如刚确认是文件后获取文件名）。
 
-### Regular Expressions
-- Regular expressions are used for identifying video files and extracting IDs.
-- Currently, `Regex::new()` is called within functions. If a function is called in a tight loop (like during a scan), consider moving the `Regex` to a `once_cell::sync::Lazy` or `lazy_static!` for better performance.
-- ID Extraction Pattern: `r"[[:alpha:]]+-\d+|[[:alpha:]]+\d+"` (matches alphanumeric IDs with or without dashes).
+### 正则表达式
+- 正则表达式用于识别视频文件和提取 ID。
+- 当前代码在函数内调用 `Regex::new()`。如果函数处于扫描等高频路径中，可考虑把 `Regex` 移到 `once_cell::sync::Lazy` 或 `lazy_static!` 以提升性能。
+- ID 提取模式：`r"[[:alpha:]]+-\d+|[[:alpha:]]+\d+"`（匹配带横杠或不带横杠的字母数字 ID）。
 
-### Documentation and Comments
-- Use `///` for doc comments on public functions, structs, and modules. Include a brief description of what it does, parameters, and return values.
-- Use `//` for internal implementation notes.
-- Focus comments on the *why* (the intent) rather than the *what* (the code itself), especially for non-obvious logic.
-- Avoid "commenting out" code; delete it instead.
+### 文档与注释
+- 对公开函数、结构体和模块使用 `///` 文档注释。简要说明用途、参数和返回值。
+- 内部实现说明使用 `//`。
+- 注释应重点解释“为什么”（意图），而不是复述代码“做了什么”，尤其是非显而易见的逻辑。
+- 不要保留“注释掉的代码”；直接删除。
 
-## Project Structure and Architecture
+## 项目结构与架构
 
-### Files
-- `src/main.rs`: Entry point. Handles CLI argument parsing (using `clap`), SMB authentication (using `net use` on Windows), and orchestrates the scanning process.
-- `src/lib.rs`: The core logic library. Contains URL conversion utilities, filename filters, and ID extraction logic. This is where most unit tests reside.
-- `Cargo.toml`: Project metadata and dependencies.
+### 文件
+- `src/main.rs`：入口点。处理 CLI 参数解析（使用 `clap`）、SMB 认证（Windows 上使用 `net use`），并编排扫描流程。
+- `src/lib.rs`：核心逻辑库。包含 URL 转换工具、文件名过滤器和 ID 提取逻辑。大多数单元测试位于此处。
+- `Cargo.toml`：项目元数据与依赖。
 
-### Concurrency Model
-- The scanner uses `ignore::WalkBuilder` with `build_parallel()` to walk the filesystem concurrently.
-- Results are collected into an `Arc<DashMap<String, String>>` to avoid global locks and maximize throughput.
-- Progress is reported via `indicatif::ProgressBar`, updated from multiple threads using atomic counters.
+### 并发模型
+- 扫描器使用 `ignore::WalkBuilder` 的 `build_parallel()` 并发遍历文件系统。
+- 结果收集到 `Arc<DashMap<String, String>>`，避免全局锁并尽量提升吞吐。
+- 进度通过 `indicatif::ProgressBar` 报告，并由多个线程通过原子计数器更新。
 
-### SMB Handling
-- SMB URLs (`smb://host/share`) are converted to UNC paths (`\\host\share`) for native Windows file access.
-- Authentication is handled by executing the `net use` command if credentials are provided in the URL.
+### SMB 处理
+- SMB URL（`smb://host/share`）会转换为 UNC 路径（`\\host\share`），以便 Windows 原生文件访问。
+- 如果 URL 中提供了凭据，则通过执行 `net use` 处理认证。
 
-## Development Workflow for Agents
-1. **Analyze:** Before making changes, read `src/lib.rs` and `src/main.rs` to understand existing patterns.
-2. **Implement:** Write idiomatic Rust code following the guidelines above.
-3. **Test:** Add unit tests in `src/lib.rs` for any new logic. Run all tests with `cargo test`.
-4. **Lint:** Run `cargo clippy` and `cargo fmt` before finishing.
-5. **Verify:** If changes affect the CLI, run the application with `cargo run -- <args>` to ensure it behaves as expected.
+## Agent 开发流程
+1. **分析：** 修改前先阅读 `src/lib.rs` 和 `src/main.rs`，理解现有模式。
+2. **实现：** 按上述指南编写惯用 Rust 代码。
+3. **测试：** 新逻辑需在 `src/lib.rs` 中添加单元测试。运行 `cargo test`。
+4. **Lint：** 完成前运行 `cargo clippy` 和 `cargo fmt`。
+5. **验证：** 如果改动影响 CLI，使用 `cargo run -- <args>` 运行应用确认行为正确。
+
+## Agent 技能
+
+### Issue tracker
+
+Issue 和 PRD 以本地 markdown 文件形式存放在 `.scratch/` 下。详见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+Triage 角色使用默认的标签/状态词汇。详见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+本仓库使用 single-context 的领域文档布局。详见 `docs/agents/domain.md`。

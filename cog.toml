@@ -1,0 +1,28 @@
+from_latest_tag = false
+ignore_merge_commits = true
+ignore_fixup_commits = true
+disable_changelog = true
+disable_bump_commit = true
+
+[git_hooks.commit-msg]
+script = """#!/bin/sh
+set -eu
+
+echo "[commit-msg] Verify conventional commit message"
+cog verify --file "$1" --ignore-merge-commits --ignore-fixup-commits
+"""
+
+[git_hooks.pre-commit]
+script = """#!/bin/sh
+set -eu
+
+./scripts/pre-commit.sh
+"""
+
+[commit_types]
+
+[changelog]
+path = "CHANGELOG.md"
+authors = []
+
+[bump_profiles]
